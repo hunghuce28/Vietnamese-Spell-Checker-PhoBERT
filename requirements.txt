@@ -1,0 +1,8 @@
+# Không cần thư viện bên ngoài (Phiên bản cũ)
+# Phiên bản mới (Học Sâu) sử dụng:
+# - torch 
+# - transformers
+# - numpy
+torch
+transformers
+numpy
