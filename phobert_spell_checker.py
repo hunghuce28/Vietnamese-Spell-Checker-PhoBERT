@@ -56,7 +56,8 @@ TEENCODE_DICT = {
     "k": "không", "ko": "không", "hok": "học", "vs": "với", "ik": "đi", 
     "j": "gì", "r": "rồi", "lun": "luôn", "ui": "ơi", "z": "vậy", "zậy": "vậy",
     "nhìu": "nhiều", "cx": "cũng", "hong": "không", "coá": "có", "nhó": "nhớ",
-    "chx": "chưa", "khum": "không", "thui": "thôi", "rùi": "rồi"
+    "chx": "chưa", "khum": "không", "thui": "thôi", "rùi": "rồi", "thưng": "thương",
+    "đg": "đang", "gòi": "rồi"
 }
 
 
@@ -560,7 +561,7 @@ class MLVietnameseSpellChecker:
             tokens = self._tokenize(current_text)
             for i in range(len(tokens)):
                 word = tokens[i].lower()
-                if not self._is_word_token(word) or len(word) <= 1: continue
+                if not self._is_word_token(word): continue
                 
                 log_probs = self.scorer.get_masked_log_probs(tokens, i)
                 if log_probs is None: continue
@@ -604,7 +605,7 @@ class MLVietnameseSpellChecker:
             toks = self._tokenize(current_text)
             for i in range(len(toks)):
                 word = toks[i].lower()
-                if not self._is_word_token(word) or len(word) <= 1: continue
+                if not self._is_word_token(word): continue
                 
                 log_probs = self.scorer.get_masked_log_probs(toks, i)
                 if log_probs is None: continue
