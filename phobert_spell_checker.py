@@ -51,6 +51,14 @@ for base, variants in TONE_VARIANTS.items():
 # Nhóm nguyên âm gốc có thể nhầm lẫn
 VOWEL_GROUPS = ["aăâ", "oôơ", "uư", "eê"]
 
+TEENCODE_DICT = {
+    "mún": "muốn", "iu": "yêu", "bit": "biết", "đc": "được", "dc": "được", 
+    "k": "không", "ko": "không", "hok": "học", "vs": "với", "ik": "đi", 
+    "j": "gì", "r": "rồi", "lun": "luôn", "ui": "ơi", "z": "vậy", "zậy": "vậy",
+    "nhìu": "nhiều", "cx": "cũng", "hong": "không", "coá": "có", "nhó": "nhớ",
+    "chx": "chưa", "khum": "không", "thui": "thôi", "rùi": "rồi"
+}
+
 
 class VietnameseDictionary:
     def __init__(self):
@@ -213,11 +221,19 @@ class EditDistance:
                         dist = EditDistance.levenshtein(word_lower, dict_word)
                         if 0 < dist <= max_distance:
                             seen.add(dict_word)
+                            # Phạt thêm (dist) nếu fallback vét cạn để tránh bẻ các chữ quá xa (VD: tâp -> thi) 
                             candidates.append((dict_word, dist))
+        
+        # Teen code & Gõ tắt sơ cấp phổ biến 
+        if word_lower in TEENCODE_DICT:
+            cand = TEENCODE_DICT[word_lower]
+            if cand not in seen:
+                seen.add(cand); candidates.append((cand, 0)) # Bonus đặc quyền distance 0 cho Teencode
 
-        # Sort by distance, then length difference, then alphabetically
-        candidates.sort(key=lambda x: (x[1], abs(len(x[0])-len(word_lower)), x[0]))
-        return candidates[:30]
+        # Sort by distance, then length difference
+        candidates.sort(key=lambda x: (x[1], abs(len(x[0])-len(word_lower))))
+        # Trả về tối đa 300 candidates để PhoBERT ranking (vì score lookup là O(1) array tra cứu nên vô cùng siêu tốc)
+        return candidates[:300]
 
 
 # =====================================================================
@@ -295,14 +311,22 @@ class PhobertScorer:
             
         results = {}
         for candidate in candidates:
-            cand_ids = self.tokenizer(candidate, add_special_tokens=False)["input_ids"]
-            if len(cand_ids) == 0:
-                results[candidate] = -float('inf')
-            elif len(cand_ids) == 1:
-                results[candidate] = log_probs[cand_ids[0]].item()
-            else:
-                # BPE penalty
-                results[candidate] = log_probs[cand_ids[0]].item() - 5.0
+            best = -float('inf')
+            
+            # PhoBERT có thể dự đoán chữ viết hoa lớn hơn rất nhiều nếu ở đầu câu
+            variants = {candidate.lower(), candidate.title(), candidate}
+            
+            for variant in variants:
+                # RoBERTa BPE tokenizer distinguishes space-prefixed tokens
+                c1 = self.tokenizer(" " + variant, add_special_tokens=False)["input_ids"]
+                c2 = self.tokenizer(variant, add_special_tokens=False)["input_ids"]
+                
+                for c_ids in [c1, c2]:
+                    if not c_ids: continue
+                    val = log_probs[c_ids[0]].item() if len(c_ids) == 1 else log_probs[c_ids[0]].item() - 5.0
+                    best = max(best, val)
+                
+            results[candidate] = best
         return results
 
 
@@ -400,6 +424,11 @@ class MLVietnameseSpellChecker:
 
         # Lọc biến thể hợp lệ
         valid_variants = {v for v in variants if self.dictionary.contains(v) and v != word}
+        
+        # Thêm Teencode cho real-word check
+        if word in TEENCODE_DICT:
+            valid_variants.add(TEENCODE_DICT[word])
+
         if not valid_variants:
             return []
 
@@ -436,6 +465,7 @@ class MLVietnameseSpellChecker:
             v_bases = to_bases(v)
             
             is_tone_only = (w_bases == v_bases)
+            is_teencode = (word in TEENCODE_DICT and v == TEENCODE_DICT[word])
             
             # Phát hiện nếu chỉ sai lệch nguyên âm (o ↔ ô)
             is_vowel_only = False
@@ -476,7 +506,9 @@ class MLVietnameseSpellChecker:
                                 is_ending_typo = True
                                 break
 
-            if is_tone_only:
+            if is_teencode:
+                thresh = 0.5 # Rất ưu tiên cho lỗi gõ tắt
+            elif is_tone_only:
                 thresh = TONE_THRESHOLD if not has_diacritics else 4.0
             elif is_vowel_only:
                 # Các lỗi thiếu mũ như (toi -> tôi, tran -> trần) rất phổ biến, ngang với gõ thiếu dấu
@@ -507,8 +539,8 @@ class MLVietnameseSpellChecker:
         scored = []
         for (word, dist), cased_word in zip(candidates, cased_words):
             phobert_score = scores_dict.get(cased_word, -float('inf'))
-            # [FIX] Giảm penalty xuống 1.0/edit để các từ xa về edit nhưng sát về nghĩa (như giúp so với gíp) dễ chiến thắng hơn
-            combined_score = phobert_score - (dist * 1.0)
+            # Tăng Penalty lên 3.0/edit để tránh các ứng viên distance 2 (như 'thi') cướp chỗ của distance 1 (như 'tập')
+            combined_score = phobert_score - (dist * 3.0)
             scored.append((word, combined_score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
@@ -516,52 +548,43 @@ class MLVietnameseSpellChecker:
 
     def correct_text(self, text: str, max_iters: int = 2) -> str:
         """
-        [FIX NỘI TẠI] Sequential Left-To-Right Multi-Pass.
-        Chữa Lỗi 2 Bước Khép Kín:
-        B1: Chữa TẤT CẢ các lỗi Non-word trước (vì nó sai chắc chắn) để cứu lại ngữ cảnh. (máy tính guíp -> máy tính giúp). Phải LTR liền!
-        B2: Sau khi có bệ phóng ngữ cảnh sạch, mới đi rà lỗi Real-word (sai văn cảnh).
+        [FIX NỘI TẠI] Unified Sequential Left-To-Right Pass.
+        Chữa Lỗi Đồng Thời Non-word và Real-word.
+        Giúp tránh lỗi Catch-22 khi từ Real-word sai làm hỏng ngữ cảnh của Non-word (VD: "em dang lam bài tâp")
         """
         current_text = text
         VOWELS_WITH_MARKS = set("àáảãạằắẳẵặầấẩẫậèéẻẽẹềếểễệìíỉĩịòóỏõọồốổỗộờớởỡợùúủũụừứửữựỳýỷỹỵ")
         
         for _ in range(max_iters):
             changed = False
-            
-            # === BƯỚC 1: Sửa Non-word ===
             tokens = self._tokenize(current_text)
             for i in range(len(tokens)):
                 word = tokens[i].lower()
                 if not self._is_word_token(word) or len(word) <= 1: continue
+                
+                log_probs = self.scorer.get_masked_log_probs(tokens, i)
+                if log_probs is None: continue
+                    
                 if not self.dictionary.contains(word):
-                    log_probs = self.scorer.get_masked_log_probs(tokens, i)
-                    if log_probs is not None:
-                        candidates = EditDistance.generate_candidates(word, self.dictionary, max_distance=2)
-                        ranked = self._rank_candidates_with_phobert(tokens, i, candidates, log_probs)
-                        if ranked:
-                            best = self._preserve_case(tokens[i], ranked[0][0])
-                            if best != tokens[i]:
-                                tokens[i] = best
-                                changed = True
+                    # B1: Non-word
+                    candidates = EditDistance.generate_candidates(word, self.dictionary, max_distance=2)
+                    ranked = self._rank_candidates_with_phobert(tokens, i, candidates, log_probs)
+                    if ranked:
+                        best = self._preserve_case(tokens[i], ranked[0][0])
+                        if best != tokens[i]:
+                            tokens[i] = best
+                            changed = True
+                else:
+                    # B2: Real-word
+                    has_diacritics = any(c in VOWELS_WITH_MARKS for c in word)
+                    better = self._check_real_word_with_phobert(tokens, i, word, has_diacritics, log_probs)
+                    if better:
+                        best = self._preserve_case(tokens[i], better[0][0])
+                        if best != tokens[i]:
+                            tokens[i] = best
+                            changed = True
+                            
             current_text = " ".join(tokens)
-            
-            # === BƯỚC 2: Sửa Real-word (Sau khi ngữ cảnh rác đã được dọn sạch) ===
-            tokens = self._tokenize(current_text)
-            for i in range(len(tokens)):
-                word = tokens[i].lower()
-                if not self._is_word_token(word) or len(word) <= 1: continue
-                # Lúc này những Non-word đã bị fix thành có trong dictionary
-                if self.dictionary.contains(word):
-                    log_probs = self.scorer.get_masked_log_probs(tokens, i)
-                    if log_probs is not None:
-                        has_diacritics = any(c in VOWELS_WITH_MARKS for c in word)
-                        better = self._check_real_word_with_phobert(tokens, i, word, has_diacritics, log_probs)
-                        if better:
-                            best = self._preserve_case(tokens[i], better[0][0])
-                            if best != tokens[i]:
-                                tokens[i] = best
-                                changed = True
-            current_text = " ".join(tokens)
-
             if not changed:
                 break
                 
@@ -578,48 +601,42 @@ class MLVietnameseSpellChecker:
         
         for _ in range(2):
             changed = False
-            # B1: Quét Non-Word
             toks = self._tokenize(current_text)
             for i in range(len(toks)):
                 word = toks[i].lower()
                 if not self._is_word_token(word) or len(word) <= 1: continue
-                if not self.dictionary.contains(word):
-                    log_probs = self.scorer.get_masked_log_probs(toks, i)
-                    if log_probs is not None:
-                        candidates = EditDistance.generate_candidates(word, self.dictionary, max_distance=2)
-                        ranked = self._rank_candidates_with_phobert(toks, i, candidates, log_probs)
-                        if ranked:
-                            best = self._preserve_case(toks[i], ranked[0][0])
-                            if best != toks[i]:
-                                all_errors.append({
-                                    "position": i, "word": toks[i], "type": "non-word", "suggestions": ranked[:5],
-                                    "context_tokens": list(toks)
-                                })
-                                toks[i] = best
-                                changed = True
-            current_text = " ".join(toks)
-            
-            # B2: Quét Real-Word
-            toks = self._tokenize(current_text)
-            for i in range(len(toks)):
-                word = toks[i].lower()
-                if not self._is_word_token(word) or len(word) <= 1: continue
-                if self.dictionary.contains(word):
-                    log_probs = self.scorer.get_masked_log_probs(toks, i)
-                    if log_probs is not None:
-                        has_diacritics = any(c in VOWELS_WITH_MARKS for c in word)
-                        better = self._check_real_word_with_phobert(toks, i, word, has_diacritics, log_probs)
-                        if better:
-                            best = self._preserve_case(toks[i], better[0][0])
-                            if best != toks[i]:
-                                all_errors.append({
-                                    "position": i, "word": toks[i], "type": "real-word", "suggestions": better[:5],
-                                    "context_tokens": list(toks)
-                                })
-                                toks[i] = best
-                                changed = True
-            current_text = " ".join(toks)
+                
+                log_probs = self.scorer.get_masked_log_probs(toks, i)
+                if log_probs is None: continue
 
+                if not self.dictionary.contains(word):
+                    # B1: Non-word
+                    candidates = EditDistance.generate_candidates(word, self.dictionary, max_distance=2)
+                    ranked = self._rank_candidates_with_phobert(toks, i, candidates, log_probs)
+                    if ranked:
+                        best = self._preserve_case(toks[i], ranked[0][0])
+                        if best != toks[i]:
+                            all_errors.append({
+                                "position": i, "word": toks[i], "type": "non-word", "suggestions": ranked[:5],
+                                "context_tokens": list(toks)
+                            })
+                            toks[i] = best
+                            changed = True
+                else:
+                    # B2: Real-word
+                    has_diacritics = any(c in VOWELS_WITH_MARKS for c in word)
+                    better = self._check_real_word_with_phobert(toks, i, word, has_diacritics, log_probs)
+                    if better:
+                        best = self._preserve_case(toks[i], better[0][0])
+                        if best != toks[i]:
+                            all_errors.append({
+                                "position": i, "word": toks[i], "type": "real-word", "suggestions": better[:5],
+                                "context_tokens": list(toks)
+                            })
+                            toks[i] = best
+                            changed = True
+                            
+            current_text = " ".join(toks)
             if not changed:
                 break
 
