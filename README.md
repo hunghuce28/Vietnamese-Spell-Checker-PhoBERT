@@ -95,7 +95,7 @@ Thay vì quét vét cạn 8.800 từ vựng gây tràn bộ nhớ, hệ thống 
 - **Tầng 1:** Ưu tiên đi săn trọn bộ từ vô nghĩa (Non-word) và sửa ngay lập tức để lấy lại mặt bằng ngữ cảnh trong sạch.
 - **Tầng 2:** Tiến hành rà lỗi sai văn cảnh (Real-word) trên nền ngữ cảnh vừa được dọn dẹp, tuyệt đối không bao giờ làm xáo trộn các từ đang đúng (Bắt dính 100% các lỗi khuyết dấu, thiếu mũ phức tạp).
 
-### 4. Zero False-Positives (Không Chữa Chữa Lợn Lành Thành Lợn Què)
+### 4. Zero False-Positives 
 Hệ thống sử dụng các tầng Threshold (Ngưỡng kích hoạt) chia theo đặc trưng hình thái biến đổi: Thay dấu (Tone), thay âm vực cuối (Ending), hay thay phụ âm chuẩn (Consonant). Kết hợp tính năng bảo tồn viết Hoa/viết Thường (`Case Preservation`) trước khi đi qua PhoBERT giúp hệ thống đạt tỉ lệ **0 False Positives**, đảm bảo tôn trọng tuyệt đối văn phông của người viết nếu họ dùng đúng từ chuyên ngành mượn/chế nhưng đúng nguyên tắc.
 
 ---
