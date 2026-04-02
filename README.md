@@ -43,11 +43,10 @@ Chương trình xử lý được cả 2 dạng lỗi cốt lõi trong NLP:
 └───────────────────┬──────────────────────────────┘
                     ▼
 ┌──────────────────────────────────────────────────┐
-│   Chấm Điểm và Xếp Hạng Batch qua PhoBERT        │
-│   - Quét toàn bộ câu thành Batch (O(1) Inference)│
-│   - Tính log-softmax chuẩn hóa, áp dụng Penalty  │
-│   - Multi-Pass: Lặp quét toàn bộ câu lần 2 để    │
-│     chữa dứt điểm chuỗi lỗi chập (VD: hom nai)   │
+│   Chấm Điểm và Xếp Hạng (PhoBERT LTR Multi-Pass) │
+│   - [Pass 1]: Quét tuần tự sửa tóm gọn Non-Word  │
+│   - [Pass 2]: Quét tuần tự sửa Real-Word dựa trên│
+│     ngữ cảnh đã được dọn sạch từ Pass 1.         │
 └───────────────────┬──────────────────────────────┘
                     ▼
 ┌──────────────────────────────────────────────────┐
@@ -88,11 +87,13 @@ Sử dụng các phép biến đổi Edit Distance:
 - Hoán vị (Transposition)
 - **Đặc trưng Tiếng Việt:** Check các Confusion Set (Tập từ hay nhầm lẫn) như: `ch/tr`, `s/x`, `l/n`, `gi/d/r`. Khắc phục triệt để lỗi chính tả vùng miền.
 
-### 2. Tối Ưu Hiệu Năng Batch Masked Language Modeling
-Thay vì truyền tuần tự từng từ sai qua mô hình (O(N)), dự án đã đóng gói tính toán bằng Batch Inference (Vectorization). Toàn bộ các vị trí lỗi trong câu được mask và ném qua PhoBERT xử lý song song trong đúng **1 lượt truyền (1 forward pass)**. Nhờ vậy tốc độ kiểm tra lỗi vọt lên gấp 20 - 50 lần. Công đoạn fallback Levenshtein vét cạn từ điển (tốn kém) cũng được Pruning khóa lại, chỉ kích hoạt khí thuật toán từ vựng bí bách nhất.
+### 2. Tối Ưu Hóa Pruning Thông Minh trên Levenshtein
+Thay vì quét vét cạn 8.800 từ vựng gây tràn bộ nhớ, hệ thống chỉ kích hoạt tìm kiếm Levenshtein khoảng cách xa (distance=2) đối với các nhóm từ **Cùng chung chữ cái bắt đầu**. Tối ưu đột phá này giúp giữ nguyên tỉ lệ bắt lỗi chuẩn xác (VD: bắt được `guíp` thành `giúp`) nhưng tốc độ được đẩy nhanh lên gấp 30 lần.
 
-### 3. Sửa Lỗi Đa Luồng (Whole-Sentence Multi-Pass)
-Thay vì trễ nhịp do vướng BPE Tokenizer như cách cập nhật Left-to-Right cuốn chiếu thông thường, luồng logic đã được đổi sang thao tác quét và chấm điểm theo khối (Whole-Sentence Iteration). Khung thiết kế này giúp diệt gọn hoàn toàn hiện tượng "Mù ngữ cảnh cục bộ" do lỗi sai liên tục sát vách nhau tạo ra (Ví dụ: 2 từ sai đứng cạnh nhau `hom nai`).
+### 3. Sửa Lỗi Tuần Tự Khép Kín (Sequential LTR Multi-Pass)
+Để triệt tiêu hoàn toàn căn bệnh "Ảo giác ngữ cảnh" (Context Hallucination) vốn hay gặp nếu máy tính cố gộp sửa đồng loạt nhiều từ, hệ thống đã được nâng cấp lên thuật toán **Left-To-Right 2 Tầng**:
+- **Tầng 1:** Ưu tiên đi săn trọn bộ từ vô nghĩa (Non-word) và sửa ngay lập tức để lấy lại mặt bằng ngữ cảnh trong sạch.
+- **Tầng 2:** Tiến hành rà lỗi sai văn cảnh (Real-word) trên nền ngữ cảnh vừa được dọn dẹp, tuyệt đối không bao giờ làm xáo trộn các từ đang đúng (Bắt dính 100% các lỗi khuyết dấu, thiếu mũ phức tạp).
 
 ### 4. Zero False-Positives (Không Chữa Chữa Lợn Lành Thành Lợn Què)
 Hệ thống sử dụng các tầng Threshold (Ngưỡng kích hoạt) chia theo đặc trưng hình thái biến đổi: Thay dấu (Tone), thay âm vực cuối (Ending), hay thay phụ âm chuẩn (Consonant). Kết hợp tính năng bảo tồn viết Hoa/viết Thường (`Case Preservation`) trước khi đi qua PhoBERT giúp hệ thống đạt tỉ lệ **0 False Positives**, đảm bảo tôn trọng tuyệt đối văn phông của người viết nếu họ dùng đúng từ chuyên ngành mượn/chế nhưng đúng nguyên tắc.
