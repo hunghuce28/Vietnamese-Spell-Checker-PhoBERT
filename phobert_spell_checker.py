@@ -57,7 +57,22 @@ TEENCODE_DICT = {
     "j": "gì", "r": "rồi", "lun": "luôn", "ui": "ơi", "z": "vậy", "zậy": "vậy",
     "nhìu": "nhiều", "cx": "cũng", "hong": "không", "coá": "có", "nhó": "nhớ",
     "chx": "chưa", "khum": "không", "thui": "thôi", "rùi": "rồi", "thưng": "thương",
-    "đg": "đang", "gòi": "rồi"
+    "đg": "đang", "gòi": "rồi",
+    
+    "tro": "cho", "cko": "cho", "chong": "trong",
+    "nghười": "người", "nkà": "nhà", "thàn": "thành", "nghày": "ngày",
+    "ỡ": "ở", "tkành": "thành", "cos": "có", "nkiều": "nhiều",
+    "nkững": "những", "cura": "của", "chên": "trên", "tkeo": "theo",
+    "trính": "chính", "vaf": "và", "fải": "phải",
+    "chung": "trung", "địnk": "định", "ckỉ": "chỉ", "nkân": "nhân",
+    "trức": "chức", "cinh": "kinh", "nkưng": "nhưng", "tku": "thu",
+    "bít": "biết", "chường": "trường", "ank": "anh", "á": "án",
+    "trủ": "chủ", "da": "gia", "laf": "là", "ckức": "chức",
+    "casc": "các", "giự": "dự", "tkị": "thị", "trỉ": "chỉ",
+    "tkể": "thể", "khoong": "không", "cết": "kết", "t": "tôi", "hàn": "hàng",
+    "ckủ": "chủ", "trìnk": "trình", "tkủ": "thủ", "nkư": "như",
+    
+    "suất": "xuất",
 }
 
 
